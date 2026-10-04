@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
 import { Alert, Button, Card, Col, Empty, Input, Layout, Row, Space, Tag, Typography, message } from 'antd'
-import { CheckCircleOutlined, HomeOutlined, LogoutOutlined, MedicineBoxOutlined, PhoneOutlined, SafetyOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, HomeOutlined, LogoutOutlined, MedicineBoxOutlined, PhoneOutlined, SafetyOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useStore } from '../store/useStore'
 import { AlertTypeTag, SeverityTag, StatusTag, fmtTime } from '../components/common'
+import { LOW_BATTERY, LOW_BATTERY_DAYS, lowBatteryDaysOf } from '../store/workflow'
 import ElderInfoCard from '../components/ElderInfoCard'
 import EventTimeline from '../components/EventTimeline'
 
@@ -16,12 +17,16 @@ const FamilyPortalPage: React.FC = () => {
   const elders = useStore((s) => s.elders)
   const events = useStore((s) => s.events)
   const familyRespond = useStore((s) => s.familyRespond)
+  const batteryTasks = useStore((s) => s.batteryTasks)
+  const familyRemindedCharging = useStore((s) => s.familyRemindedCharging)
+  const now = useStore((s) => s.now)
   const [notes, setNotes] = useState<Record<string, string>>({})
 
   const elder = elders.find((e) => e.id === session.elderId)
   const myEvents = events.filter((e) => e.elderId === session.elderId)
   const active = myEvents.filter((e) => e.status !== 'closed')
   const history = myEvents.filter((e) => e.status === 'closed')
+  const batteryTask = batteryTasks.find((t) => t.elderId === session.elderId && t.status !== 'resolved' && t.status !== 'replaced')
 
   if (!elder) return null
 
@@ -50,7 +55,78 @@ const FamilyPortalPage: React.FC = () => {
             <ElderInfoCard elder={elder} communityView={false} />
           </Col>
           <Col xs={24} lg={15}>
-            {active.length === 0 && (
+            {batteryTask && (
+              <Card
+                size="small"
+                style={{ marginBottom: 12, borderColor: '#ffa940' }}
+                title={
+                  <Space wrap>
+                    <ThunderboltOutlined style={{ color: '#fa8c16' }} />
+                    <Tag color="orange">设备低电照护提醒</Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      手环电量 {elder.battery}%，已连续低电 {Math.max(lowBatteryDaysOf(elder, now()), LOW_BATTERY_DAYS)} 天未充电
+                    </Text>
+                  </Space>
+                }
+              >
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 8 }}
+                  message={`老人手环连续 ${LOW_BATTERY_DAYS} 天低电且未充电，请尽快提醒老人充电或上门查看`}
+                  description={
+                    <ul style={{ margin: 0, paddingLeft: 18 }}>
+                      {batteryTask.riskTips.map((tip, i) => (
+                        <li key={i}>
+                          <Text style={{ fontSize: 12 }}>{tip}</Text>
+                        </li>
+                      ))}
+                    </ul>
+                  }
+                />
+                {batteryTask.status === 'reminding' && (
+                  <>
+                    <Input.TextArea
+                      rows={2}
+                      placeholder="给社区留言（可选），如：已电话提醒/我下班过去看看"
+                      style={{ marginBottom: 8 }}
+                      value={notes[batteryTask.id] ?? ''}
+                      onChange={(e) => setNotes({ ...notes, [batteryTask.id]: e.target.value })}
+                    />
+                    <Button
+                      type="primary"
+                      onClick={() => {
+                        familyRemindedCharging(batteryTask.id, notes[batteryTask.id] ?? '')
+                        message.success('已确认提醒老人。若老人仍未充电，社区可安排志愿者上门协助')
+                      }}
+                    >
+                      我已提醒老人充电
+                    </Button>
+                  </>
+                )}
+                {batteryTask.status !== 'reminding' && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={
+                      batteryTask.volunteerName
+                        ? `社区已安排志愿者 ${batteryTask.volunteerName}（${batteryTask.volunteerPhone}）上门协助`
+                        : '您已确认提醒老人充电，若老人仍未充上，社区将安排志愿者上门协助'
+                    }
+                    description={batteryTask.familyNote ? `家属留言：${batteryTask.familyNote}` : undefined}
+                  />
+                )}
+              </Card>
+            )}
+            {elder.battery <= LOW_BATTERY && !batteryTask && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+                message={`手环电量仅剩 ${elder.battery}%，请提醒老人尽快充电；连续 ${LOW_BATTERY_DAYS} 天未充电时社区会启动上门检查`}
+              />
+            )}
+            {active.length === 0 && !batteryTask && (
               <Card size="small" style={{ marginBottom: 12 }}>
                 <Empty description="当前没有待处理的告警，老人状态平稳" />
               </Card>

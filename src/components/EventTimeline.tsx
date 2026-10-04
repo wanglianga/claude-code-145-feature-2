@@ -6,6 +6,7 @@ import {
   HomeOutlined,
   MedicineBoxOutlined,
   PhoneOutlined,
+  ThunderboltOutlined,
   UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons'
@@ -22,6 +23,7 @@ const KIND_META: Record<TimelineEntry['kind'], { color: string; icon: React.Reac
   medical: { color: 'volcano', icon: <MedicineBoxOutlined />, label: '就医' },
   followup: { color: 'cyan', icon: <CheckCircleOutlined />, label: '回访' },
   escalation: { color: 'orange', icon: <WarningOutlined />, label: '升级' },
+  battery: { color: 'gold', icon: <ThunderboltOutlined />, label: '低电照护' },
   close: { color: 'green', icon: <CheckCircleOutlined />, label: '结案' },
 }
 

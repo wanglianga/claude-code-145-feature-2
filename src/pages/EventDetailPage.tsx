@@ -84,6 +84,28 @@ const EventDetailPage: React.FC = () => {
         </Text>
       </Space>
 
+      {ev.batteryCareTaskId && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="本事件与连续低电照护任务关联"
+          action={
+            <Button size="small" type="primary" onClick={() => nav('/battery')}>
+              前往低电照护
+            </Button>
+          }
+          description={
+            <Space direction="vertical" size={2}>
+              <Text style={{ fontSize: 12 }}>
+                离线发生在设备连续低电未充电期间，设备维护不及时已作为事件复盘的一部分（任务 {ev.batteryCareTaskId}）。
+              </Text>
+              {ev.batteryCareNote && <Text style={{ fontSize: 12 }}>{ev.batteryCareNote}</Text>}
+            </Space>
+          }
+        />
+      )}
+
       {ev.escalations.length > 0 && !closed && (
         <Alert
           type="warning"
@@ -259,6 +281,11 @@ const EventDetailPage: React.FC = () => {
               <Descriptions column={1} size="small" bordered>
                 {ev.closure.falseReason && <Descriptions.Item label="误报原因">{ev.closure.falseReason}</Descriptions.Item>}
                 <Descriptions.Item label="设备调整建议">{ev.closure.deviceSuggestion}</Descriptions.Item>
+                {ev.closure.deviceMaintenanceNote && (
+                  <Descriptions.Item label="设备维护复盘">
+                    <Text type="warning">{ev.closure.deviceMaintenanceNote}</Text>
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="复盘总结">{ev.closure.summary}</Descriptions.Item>
                 <Descriptions.Item label="结案">
                   {fmtTime(ev.closure.closedAt)} · {ev.closure.closedBy}

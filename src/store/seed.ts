@@ -1,5 +1,5 @@
-import { AlertEvent, CareProfile, DutyStaff, Elder, GridWorker } from '../types'
-import { assessSeverity, generatePlan, emptyProfile } from './workflow'
+import { AlertEvent, BatteryCareTask, CareProfile, DutyStaff, Elder, GridWorker, Volunteer } from '../types'
+import { assessSeverity, generatePlan, emptyProfile, lowBatteryDaysOf, buildBatteryRiskTips } from './workflow'
 
 const MIN = 60 * 1000
 const HOUR = 60 * MIN
@@ -53,6 +53,8 @@ export function seedElders(now: number): Elder[] {
       wearingHabit: '全天佩戴',
       deviceId: 'BR-2024-0102',
       battery: 18,
+      lowBatterySince: now - 2 * 24 * HOUR - 4 * HOUR,
+      lastChargedAt: now - 9 * 24 * HOUR,
       thresholds: { heartRateLow: 50, heartRateHigh: 110, stillnessMinutes: 60, geofenceRadius: 600, curfewTime: '20:30' },
       accessInfo: '单元门禁对讲可远程开门',
       keyCustody: '未托管，儿媳持有备用钥匙',
@@ -160,6 +162,14 @@ export const DUTY_STAFF: DutyStaff[] = [
   { role: '物业值班', name: '老周', phone: '010-88990013' },
 ]
 
+// ===================== 志愿者 =====================
+
+export const VOLUNTEERS: Volunteer[] = [
+  { id: 'v1', name: '周阿姨（社区志愿者）', phone: '13902221001', buildings: ['1栋', '2栋', '3栋'], distanceMin: 6 },
+  { id: 'v2', name: '小马（青年志愿者）', phone: '13902221002', buildings: ['4栋', '5栋', '6栋'], distanceMin: 7 },
+  { id: 'v3', name: '孙大爷（楼栋长）', phone: '13902221003', buildings: ['7栋', '8栋', '9栋'], distanceMin: 9 },
+]
+
 export const dutyText = DUTY_STAFF.map((d) => `${d.role} ${d.name}`).join(' / ')
 
 // ===================== 种子事件 =====================
@@ -202,6 +212,7 @@ function makeEventBase(e: Elder, type: AlertEvent['type'], location: string, occ
       severity,
       gridWorkers: GRID_WORKERS,
       dutyText,
+      lowBatteryDays: lowBatteryDaysOf(e, occurredAt),
     }),
   }
 }
@@ -307,6 +318,42 @@ export function seedEvents(now: number): AlertEvent[] {
   return [ev1, ev2, ev3, ev4]
 }
 
+// ===================== 种子低电照护任务 =====================
+
+export function seedBatteryTasks(now: number): BatteryCareTask[] {
+  const elders = seedElders(now)
+  const e2 = elders[1] // 李建国：电量 18%，已连续低电 2 天以上且未充电
+  const lowSince = e2.lowBatterySince ?? now - 2 * 24 * HOUR
+  // 李建国既往已发生过 1 次连续低电（已闭环），本次为第 2 次 → 恢复后提示更换设备/充电底座
+  const repeatIndex = 2
+  const detectedAt = lowSince + 2 * 24 * HOUR
+  return [
+    {
+      id: 'BC-0001',
+      elderId: e2.id,
+      deviceId: e2.deviceId,
+      lowSince,
+      detectedAt,
+      battery: e2.battery,
+      status: 'family_reminded',
+      familyRemindedAt: detectedAt + 2 * HOUR,
+      familyReminderName: '刘芳（儿媳）',
+      familyNote: '昨天电话提醒过爸充电，他说充了，可手环电量还是 18%，可能不会用充电底座',
+      repeatIndex,
+      riskTips: buildBatteryRiskTips(e2, 1, repeatIndex),
+      records: [
+        { at: detectedAt, by: '系统', action: 'detect', note: '识别到设备连续两天低电且未充电，已向家属与社区推送上门检查提示' },
+        {
+          at: detectedAt + 2 * HOUR,
+          by: '刘芳（儿媳）',
+          action: 'family_reminded',
+          note: '家属确认已电话提醒老人，但设备电量仍为 18%，老人仍未完成充电',
+        },
+      ],
+    },
+  ]
+}
+
 // ===================== 初始照护画像 =====================
 
 export function seedProfiles(now: number): Record<string, CareProfile> {
@@ -320,9 +367,10 @@ export function seedProfiles(now: number): Record<string, CareProfile> {
     }),
     e2: mk('e2', {
       realRiskCount: 1,
+      lowBatteryCount: 1,
       riskLevel: 'medium',
-      riskTags: ['发生过真实风险'],
-      strategy: { visitFrequency: '隔日电话 + 每周上门一次', deviceMaintenance: '每周提醒充电，纳入设备巡检清单', familyReminder: 'APP推送 + 短信提醒' },
+      riskTags: ['发生过真实风险', '连续低电未充电'],
+      strategy: { visitFrequency: '隔日电话 + 每周上门一次', deviceMaintenance: '低电照护重点：连续两天未充电即安排志愿者上门协助，反复低电更换设备/充电底座', familyReminder: 'APP推送 + 短信提醒' },
     }),
     e3: mk('e3', {
       falseAlarmCount: 5,

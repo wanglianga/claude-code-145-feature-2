@@ -4,6 +4,7 @@ import { EditOutlined } from '@ant-design/icons'
 import { useStore } from '../store/useStore'
 import { Elder } from '../types'
 import { fmtTime } from '../components/common'
+import { LOW_BATTERY, lowBatteryDaysOf } from '../store/workflow'
 
 const { Text } = Typography
 
@@ -11,6 +12,7 @@ const { Text } = Typography
 const EldersPage: React.FC = () => {
   const elders = useStore((s) => s.elders)
   const profiles = useStore((s) => s.profiles)
+  const now = useStore((s) => s.now)
   const updateThresholds = useStore((s) => s.updateThresholds)
   const updateWearingHabit = useStore((s) => s.updateWearingHabit)
   const [editing, setEditing] = useState<Elder | null>(null)
@@ -34,13 +36,21 @@ const EldersPage: React.FC = () => {
           { title: '慢病', render: (_, e) => e.chronicDiseases.map((d) => <Tag key={d} color="magenta">{d}</Tag>), width: 160 },
           {
             title: '设备/电量',
-            width: 170,
-            render: (_, e) => (
-              <Space direction="vertical" size={0} style={{ width: 140 }}>
-                <Text style={{ fontSize: 12 }}>{e.deviceId}</Text>
-                <Progress percent={e.battery} size="small" status={e.battery <= 20 ? 'exception' : 'success'} />
-              </Space>
-            ),
+            width: 180,
+            render: (_, e) => {
+              const lowDays = lowBatteryDaysOf(e, now())
+              return (
+                <Space direction="vertical" size={0} style={{ width: 150 }}>
+                  <Text style={{ fontSize: 12 }}>{e.deviceId}</Text>
+                  <Progress percent={e.battery} size="small" status={e.battery <= 20 ? 'exception' : 'success'} />
+                  {e.battery <= LOW_BATTERY && (
+                    <Tag color="orange" style={{ marginTop: 2 }}>
+                      {lowDays >= 2 ? `连续低电 ${lowDays} 天·未充电` : '低电待充电'}
+                    </Tag>
+                  )}
+                </Space>
+              )
+            },
           },
           {
             title: '告警阈值',

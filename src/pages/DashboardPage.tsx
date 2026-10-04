@@ -6,7 +6,7 @@ import { useStore } from '../store/useStore'
 import { DUTY_STAFF } from '../store/seed'
 import { AlertType, ALERT_TYPE_LABEL, ESCALATION_LABEL, EventStatus, EVENT_STATUS_LABEL } from '../types'
 import { AlertTypeTag, SeverityTag, StatusTag, fmtTime } from '../components/common'
-import { FAMILY_TIMEOUT_MS } from '../store/workflow'
+import { FAMILY_TIMEOUT_MS, LOW_BATTERY, lowBatteryDaysOf } from '../store/workflow'
 
 const { Text } = Typography
 
@@ -26,6 +26,9 @@ const DashboardPage: React.FC = () => {
   const active = events.filter((e) => e.status !== 'closed')
   const escalated = active.filter((e) => e.escalations.length > 0)
   const closedToday = events.filter((e) => e.status === 'closed' && e.closure && now() - e.closure.closedAt < 24 * 3600 * 1000)
+  const batteryTasks = useStore((s) => s.batteryTasks)
+  const batteryActive = batteryTasks.filter((t) => t.status !== 'resolved' && t.status !== 'replaced')
+  const lowDevices = elders.filter((e) => e.battery <= LOW_BATTERY)
 
   const rows = useMemo(
     () =>
@@ -50,23 +53,63 @@ const DashboardPage: React.FC = () => {
           </Space>
         }
       />
+      {batteryActive.length > 0 && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={
+            <Space wrap>
+              <ThunderboltOutlined />
+              <span>
+                {batteryActive.length} 位老人手环连续低电未充电：
+                {batteryActive
+                  .map((t) => {
+                    const e = elders.find((x) => x.id === t.elderId)
+                    return e ? `${e.name}（${e.battery}%，已${Math.max(lowBatteryDaysOf(e, now()), 2)}天）` : t.elderId
+                  })
+                  .join('、')}
+              </span>
+              <Button size="small" type="primary" onClick={() => nav('/battery')}>
+                进入低电照护处置
+              </Button>
+              <Text type="secondary">家属确认已提醒仍未充电可安排志愿者；低电期间离线将计入事件复盘</Text>
+            </Space>
+          }
+        />
+      )}
       <Row gutter={12} style={{ marginBottom: 12 }}>
-        <Col span={6}>
+        <Col xs={12} md={4}>
           <Card size="small">
             <Statistic title="待处理告警" value={active.length} prefix={<AlertOutlined />} valueStyle={{ color: active.length ? '#cf1322' : undefined }} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={4}>
           <Card size="small">
             <Statistic title="已触发升级情形" value={escalated.length} prefix={<ThunderboltOutlined />} valueStyle={{ color: escalated.length ? '#fa8c16' : undefined }} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={4}>
+          <Card size="small">
+            <Statistic
+              title="低电照护进行中"
+              value={batteryActive.length}
+              prefix={<ThunderboltOutlined />}
+              valueStyle={{ color: batteryActive.length ? '#fa8c16' : undefined }}
+            />
+          </Card>
+        </Col>
+        <Col xs={12} md={4}>
+          <Card size="small">
+            <Statistic title="当前低电设备" value={lowDevices.length} />
+          </Card>
+        </Col>
+        <Col xs={12} md={4}>
           <Card size="small">
             <Statistic title="24小时内已结案" value={closedToday.length} />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col xs={12} md={4}>
           <Card size="small">
             <Statistic title="在册独居老人" value={elders.length} suffix="位" />
           </Card>
@@ -112,6 +155,18 @@ const DashboardPage: React.FC = () => {
             { title: '位置', dataIndex: 'location', width: 100 },
             { title: '发生时间', render: (_, r) => fmtTime(r.occurredAt), width: 100 },
             { title: '状态', render: (_, r) => <StatusTag v={r.status} />, width: 100 },
+            {
+              title: '低电照护',
+              width: 90,
+              render: (_, r) =>
+                r.batteryCareTaskId ? (
+                  <Tag color="orange" style={{ cursor: 'pointer' }} onClick={(e) => { e.stopPropagation(); nav('/battery') }}>
+                    低电关联
+                  </Tag>
+                ) : (
+                  <Text type="secondary">—</Text>
+                ),
+            },
             {
               title: '升级情形',
               render: (_, r) => (

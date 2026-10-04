@@ -11,7 +11,12 @@ const RISK_COLOR = { high: 'red', medium: 'orange', low: 'green' } as const
 const RISK_LABEL = { high: '高风险', medium: '中风险', low: '低风险' } as const
 
 const VISIT_OPTIONS = ['每日上门巡访 + 早晚两次电话', '隔日电话 + 每周上门一次', '每周电话巡访一次']
-const DEVICE_OPTIONS = ['安排上门检修设备并重新标定阈值', '每周提醒充电，纳入设备巡检清单', '按季度常规巡检']
+const DEVICE_OPTIONS = [
+  '低电照护重点：连续两天未充电即安排志愿者上门协助，反复低电更换设备/充电底座',
+  '安排上门检修设备并重新标定阈值',
+  '每周提醒充电，纳入设备巡检清单',
+  '按季度常规巡检',
+]
 const REMINDER_OPTIONS = ['升级为电话+短信+APP三通道，并约谈家属明确照护责任', 'APP推送 + 短信提醒', '仅APP推送']
 
 /** 照护画像：由事件结案沉淀，区分设备误报 / 照护缺口 / 真实风险 */
@@ -80,6 +85,9 @@ const ProfilesPage: React.FC = () => {
                 </Col>
                 <Col span={8}>
                   <Statistic title="上门无人" value={p.doorNoAnswerCount} valueStyle={{ fontSize: 16 }} />
+                </Col>
+                <Col span={8}>
+                  <Statistic title="连续低电未充电" value={p.lowBatteryCount} valueStyle={{ color: p.lowBatteryCount ? '#fa8c16' : undefined, fontSize: 16 }} />
                 </Col>
               </Row>
               <Descriptions column={1} size="small" style={{ marginTop: 8 }} bordered>

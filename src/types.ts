@@ -45,6 +45,7 @@ export type EscalationKind =
   | 'door_no_answer' // 网格员上门无人开门
   | 'need_property' // 需联动物业
   | 'need_120' // 需联动120
+  | 'battery_unmaintained' // 低电维护不及时
 
 export const ESCALATION_LABEL: Record<EscalationKind, string> = {
   family_timeout: '家属超时未响应',
@@ -54,6 +55,7 @@ export const ESCALATION_LABEL: Record<EscalationKind, string> = {
   door_no_answer: '上门无人开门',
   need_property: '需联动物业开门',
   need_120: '需联动120急救',
+  battery_unmaintained: '低电设备维护不及时',
 }
 
 // ===================== 老人与设备 =====================
@@ -94,12 +96,83 @@ export interface Elder {
   wearingHabit: string // 佩戴习惯
   deviceId: string
   battery: number // 设备电量 %
+  lowBatterySince?: number // 最近一次进入低电（≤20%）的时间；充电恢复后清空
+  lastChargedAt?: number // 最近一次充电恢复时间
   thresholds: Thresholds
   accessInfo: string // 门禁信息
   keyCustody: string // 钥匙托管
   historyFalseAlarms: number // 历史误报次数
   lastVisit: { at: number; worker: string; note: string } // 上一次回访记录
   trajectory: TrajectoryPoint[] // 最近活动轨迹
+}
+
+// ===================== 低电照护任务 =====================
+
+export type BatteryTaskStatus =
+  | 'reminding' // 低电满2天：已提示家属/社区，等待家属确认
+  | 'family_reminded' // 家属确认已提醒，等待老人充电
+  | 'volunteer_dispatched' // 家属确认提醒无效：志愿者已安排
+  | 'volunteer_arrived' // 志愿者已上门
+  | 'resolved' // 已恢复充电
+  | 'replaced' // 已更换设备/充电底座
+
+export const BATTERY_TASK_STATUS_LABEL: Record<BatteryTaskStatus, string> = {
+  reminding: '待家属确认',
+  family_reminded: '家属已提醒·待充电',
+  volunteer_dispatched: '志愿者已安排',
+  volunteer_arrived: '志愿者已上门',
+  resolved: '已恢复充电',
+  replaced: '已更换设备',
+}
+
+/** 低电照护协助记录（家属提醒 / 志愿者上门协助 / 更换设备） */
+export interface BatteryCareRecord {
+  at: number
+  by: string
+  action: 'detect' | 'family_reminded' | 'volunteer_dispatch' | 'volunteer_arrive' | 'charge_assist' | 'replace_device' | 'family_dismiss'
+  note?: string
+}
+
+/** 设备连续低电导致的照护风险任务 */
+export interface BatteryCareTask {
+  id: string
+  elderId: string
+  deviceId: string
+  lowSince: number // 连续低电起始时间
+  detectedAt: number // 系统识别“连续两天低电”的时间
+  battery: number
+  status: BatteryTaskStatus
+  familyRemindedAt?: number // 家属确认已提醒老人充电的时间
+  familyReminderName?: string
+  familyNote?: string
+  volunteerId?: string
+  volunteerName?: string
+  volunteerPhone?: string
+  dispatchedAt?: number
+  arrivedAt?: number
+  /** 低电处理完成：充电协助人 */
+  chargeAssistedBy?: string
+  /** 低电处理完成：充电恢复时间 */
+  resolvedAt?: number
+  /** 反复低电后系统是否已提示更换设备/充电底座 */
+  replacementPrompted?: boolean
+  /** 是否已登记更换设备/充电底座的处置决定 */
+  replacementDecided?: boolean
+  replacementKind?: 'device' | 'charger' | null
+  replacementNote?: string
+  /** 第几次连续低电（1=首次，≥2 提示更换设备或底座） */
+  repeatIndex: number
+  riskTips: string[] // 根据佩戴习惯与历史告警生成的上门检查提示
+  records: BatteryCareRecord[]
+}
+
+/** 协助充电/上门检查的志愿者 */
+export interface Volunteer {
+  id: string
+  name: string
+  phone: string
+  buildings: string[] // 就近负责楼栋
+  distanceMin: number
 }
 
 // ===================== 处置流程 =====================
@@ -113,6 +186,7 @@ export type PlanStepKey =
   | 'call_120'
   | 'medical_follow'
   | 'device_maintain'
+  | 'battery_care'
   | 'follow_up_close'
 
 export interface PlanStep {
@@ -130,7 +204,7 @@ export type StepState = 'done' | 'active' | 'pending' | 'skipped'
 export interface TimelineEntry {
   at: number
   actor: 'device' | 'system' | 'family' | 'community' | 'medical'
-  kind: 'alert' | 'confirm' | 'visit' | 'handle' | 'medical' | 'followup' | 'escalation' | 'close'
+  kind: 'alert' | 'confirm' | 'visit' | 'handle' | 'medical' | 'followup' | 'escalation' | 'close' | 'battery'
   title: string
   detail?: string
 }
@@ -152,6 +226,10 @@ export interface AlertEvent {
   occurredAt: number
   batteryAtAlert: number
   status: EventStatus
+  /** 关联的连续低电照护任务（低电期间发生离线告警时写入，供事件复盘引用） */
+  batteryCareTaskId?: string
+  /** 设备维护不及时的复盘说明（低电期间发生离线告警时自动生成） */
+  batteryCareNote?: string
   plan: PlanStep[]
   escalations: { kind: EscalationKind; at: number; note: string }[]
 
@@ -200,6 +278,8 @@ export interface Closure {
   category: ClosureCategory
   falseReason?: string // 误报原因
   deviceSuggestion: string // 设备调整建议
+  /** 事件复盘的设备维护部分：低电期间离线时记录“设备维护不及时” */
+  deviceMaintenanceNote?: string
   familyResponseMinutes: number | null // 家属响应时长（分钟）
   communityHandleMinutes: number // 社区处置时效（分钟）
   summary: string
@@ -215,6 +295,7 @@ export interface CareProfile {
   familyTimeoutCount: number // 家属无人响应
   offlineCount: number // 设备频繁离线
   doorNoAnswerCount: number // 上门无人在家
+  lowBatteryCount: number // 连续低电未充电（设备维护照护风险）
   riskLevel: 'high' | 'medium' | 'low'
   riskTags: string[] // 画像标签
   strategy: {

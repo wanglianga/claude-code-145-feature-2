@@ -3,6 +3,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'r
 import { Button, Dropdown, Layout, Menu, Space, Tag, Typography } from 'antd'
 import {
   AlertOutlined,
+  ThunderboltOutlined,
   ClockCircleOutlined,
   IdcardOutlined,
   LogoutOutlined,
@@ -16,6 +17,7 @@ import DashboardPage from './pages/DashboardPage'
 import EventDetailPage from './pages/EventDetailPage'
 import EldersPage from './pages/EldersPage'
 import ProfilesPage from './pages/ProfilesPage'
+import BatteryCarePage from './pages/BatteryCarePage'
 import FamilyPortalPage from './pages/FamilyPortalPage'
 
 const { Header, Sider, Content } = Layout
@@ -37,7 +39,9 @@ const CommunityShell: React.FC = () => {
   const logout = useStore((s) => s.logout)
   const fastForward = useStore((s) => s.fastForward)
   const events = useStore((s) => s.events)
+  const batteryTasks = useStore((s) => s.batteryTasks)
   const activeCount = events.filter((e) => e.status !== 'closed').length
+  const batteryActive = batteryTasks.filter((t) => t.status !== 'resolved' && t.status !== 'replaced').length
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -51,6 +55,7 @@ const CommunityShell: React.FC = () => {
           onClick={(e) => nav(e.key)}
           items={[
             { key: '/', icon: <AlertOutlined />, label: `告警工作台（${activeCount}）` },
+            { key: '/battery', icon: <ThunderboltOutlined />, label: `低电照护（${batteryActive}）` },
             { key: '/elders', icon: <TeamOutlined />, label: '老人档案与设备' },
             { key: '/profiles', icon: <IdcardOutlined />, label: '照护画像' },
           ]}
@@ -83,6 +88,7 @@ const CommunityShell: React.FC = () => {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/events/:id" element={<EventDetailPage />} />
+            <Route path="/battery" element={<BatteryCarePage />} />
             <Route path="/elders" element={<EldersPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

@@ -6,6 +6,7 @@ import {
   HomeOutlined,
   MedicineBoxOutlined,
   PhoneOutlined,
+  ThunderboltOutlined,
   UserOutlined,
   WarningOutlined,
 } from '@ant-design/icons'
@@ -23,6 +24,7 @@ const KIND_META: Record<TimelineEntry['kind'], { color: string; icon: React.Reac
   followup: { color: 'cyan', icon: <CheckCircleOutlined />, label: '回访' },
   escalation: { color: 'orange', icon: <WarningOutlined />, label: '升级' },
   close: { color: 'green', icon: <CheckCircleOutlined />, label: '结案' },
+  battery: { color: 'gold', icon: <ThunderboltOutlined />, label: '低电' },
 }
 
 const ACTOR_LABEL: Record<TimelineEntry['actor'], string> = {
@@ -31,6 +33,7 @@ const ACTOR_LABEL: Record<TimelineEntry['actor'], string> = {
   family: '家属',
   community: '社区',
   medical: '医疗',
+  volunteer: '志愿者',
 }
 
 /** 同一事件内的完整记录：告警、确认、上门、处置、就医、回访 */

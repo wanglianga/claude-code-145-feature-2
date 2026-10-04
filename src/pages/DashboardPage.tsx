@@ -26,6 +26,10 @@ const DashboardPage: React.FC = () => {
   const active = events.filter((e) => e.status !== 'closed')
   const escalated = active.filter((e) => e.escalations.length > 0)
   const closedToday = events.filter((e) => e.status === 'closed' && e.closure && now() - e.closure.closedAt < 24 * 3600 * 1000)
+  const batteryEpisodes = useStore((s) => s.batteryEpisodes)
+  const lowBatteryNeedVisit = batteryEpisodes.filter(
+    (ep) => ep.status !== 'resolved' && ep.status !== 'replacement' && ep.lowDays >= 2,
+  )
 
   const rows = useMemo(
     () =>
@@ -50,6 +54,26 @@ const DashboardPage: React.FC = () => {
           </Space>
         }
       />
+      {lowBatteryNeedVisit.length > 0 && (
+        <Alert
+          type="error"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={
+            <Space wrap>
+              <span>
+                {lowBatteryNeedVisit
+                  .map((ep) => `${elders.find((e) => e.id === ep.elderId)?.name ?? ep.elderId}（连续${ep.lowDays}天低电${ep.offlineAlertIds.length ? '、已发生离线' : ''}）`)
+                  .join('、')}{' '}
+                的手环连续两天低电未充电，已依据佩戴习惯与历史告警提示家属/社区上门检查
+              </span>
+              <Button size="small" type="primary" danger ghost onClick={() => nav('/battery')}>
+                进入低电照护处置
+              </Button>
+            </Space>
+          }
+        />
+      )}
       <Row gutter={12} style={{ marginBottom: 12 }}>
         <Col span={6}>
           <Card size="small">

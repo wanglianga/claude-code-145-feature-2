@@ -5,10 +5,11 @@ import { useStore } from '../store/useStore'
 
 const { Title, Text, Paragraph } = Typography
 
-/** 测试账号：community/123456（社区值班端）、family/123456（家属端，绑定王秀兰） */
+/** 测试账号：community/123456（社区值班端）、family/123456（家属端，绑定王秀兰）、family2/123456（家属端，绑定李建国-低电照护） */
 const ACCOUNTS = [
-  { username: 'community', password: '123456', role: 'community' as const, name: '值班员小吴', desc: '社区值班端：告警工作台、上门处置、结案复盘、老人档案与照护画像' },
+  { username: 'community', password: '123456', role: 'community' as const, name: '值班员小吴', desc: '社区值班端：告警工作台、低电照护、上门处置、结案复盘、老人档案与照护画像' },
   { username: 'family', password: '123456', role: 'family' as const, name: '王莉（王秀兰女儿）', elderId: 'e1', desc: '家属端：接收告警推送，确认误报/请求电话核实/要求上门/拨打120' },
+  { username: 'family2', password: '123456', role: 'family' as const, name: '刘芳（李建国儿媳）', elderId: 'e2', desc: '家属端（低电照护）：老人手环连续低电，确认已提醒/请求志愿者上门协助充电' },
 ]
 
 const LoginPage: React.FC = () => {

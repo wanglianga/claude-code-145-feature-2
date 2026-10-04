@@ -11,6 +11,7 @@ const { Text } = Typography
 const EldersPage: React.FC = () => {
   const elders = useStore((s) => s.elders)
   const profiles = useStore((s) => s.profiles)
+  const batteryEpisodes = useStore((s) => s.batteryEpisodes)
   const updateThresholds = useStore((s) => s.updateThresholds)
   const updateWearingHabit = useStore((s) => s.updateWearingHabit)
   const [editing, setEditing] = useState<Elder | null>(null)
@@ -20,6 +21,9 @@ const EldersPage: React.FC = () => {
     setEditing(e)
     form.setFieldsValue({ ...e.thresholds, wearingHabit: e.wearingHabit })
   }
+
+  const activeEpisode = (elderId: string) =>
+    batteryEpisodes.find((ep) => ep.elderId === elderId && ep.status !== 'resolved' && ep.status !== 'replacement')
 
   return (
     <Card size="small" title="老人档案与手环绑定">
@@ -34,13 +38,21 @@ const EldersPage: React.FC = () => {
           { title: '慢病', render: (_, e) => e.chronicDiseases.map((d) => <Tag key={d} color="magenta">{d}</Tag>), width: 160 },
           {
             title: '设备/电量',
-            width: 170,
-            render: (_, e) => (
-              <Space direction="vertical" size={0} style={{ width: 140 }}>
-                <Text style={{ fontSize: 12 }}>{e.deviceId}</Text>
-                <Progress percent={e.battery} size="small" status={e.battery <= 20 ? 'exception' : 'success'} />
-              </Space>
-            ),
+            width: 190,
+            render: (_, e) => {
+              const ep = activeEpisode(e.id)
+              return (
+                <Space direction="vertical" size={0} style={{ width: 160 }}>
+                  <Text style={{ fontSize: 12 }}>{e.deviceId}</Text>
+                  <Progress percent={e.battery} size="small" status={e.battery <= 20 ? 'exception' : 'success'} />
+                  {ep && (
+                    <Text type="danger" style={{ fontSize: 11 }}>
+                      连续低电第{ep.lowDays}天 · {ep.familyStillNotCharging ? '提醒后仍未充电' : ep.familyRemindedAt ? '家属已提醒' : '已推送提醒'}
+                    </Text>
+                  )}
+                </Space>
+              )
+            },
           },
           {
             title: '告警阈值',

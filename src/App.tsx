@@ -8,6 +8,7 @@ import {
   LogoutOutlined,
   SafetyOutlined,
   TeamOutlined,
+  ThunderboltOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { useStore } from './store/useStore'
@@ -16,6 +17,7 @@ import DashboardPage from './pages/DashboardPage'
 import EventDetailPage from './pages/EventDetailPage'
 import EldersPage from './pages/EldersPage'
 import ProfilesPage from './pages/ProfilesPage'
+import BatteryCarePage from './pages/BatteryCarePage'
 import FamilyPortalPage from './pages/FamilyPortalPage'
 
 const { Header, Sider, Content } = Layout
@@ -37,7 +39,9 @@ const CommunityShell: React.FC = () => {
   const logout = useStore((s) => s.logout)
   const fastForward = useStore((s) => s.fastForward)
   const events = useStore((s) => s.events)
+  const batteryEpisodes = useStore((s) => s.batteryEpisodes)
   const activeCount = events.filter((e) => e.status !== 'closed').length
+  const lowBatteryCount = batteryEpisodes.filter((ep) => ep.status !== 'resolved' && ep.status !== 'replacement' && ep.lowDays >= 2).length
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -51,6 +55,7 @@ const CommunityShell: React.FC = () => {
           onClick={(e) => nav(e.key)}
           items={[
             { key: '/', icon: <AlertOutlined />, label: `告警工作台（${activeCount}）` },
+            { key: '/battery', icon: <ThunderboltOutlined />, label: `设备低电照护${lowBatteryCount ? `（${lowBatteryCount}）` : ''}` },
             { key: '/elders', icon: <TeamOutlined />, label: '老人档案与设备' },
             { key: '/profiles', icon: <IdcardOutlined />, label: '照护画像' },
           ]}
@@ -63,7 +68,7 @@ const CommunityShell: React.FC = () => {
             <Text type="secondary">{dayjs(useStore.getState().now()).format('YYYY-MM-DD HH:mm')}</Text>
             <Dropdown
               menu={{
-                items: [1, 5, 30].map((m) => ({ key: m, label: `快进 ${m} 分钟` })),
+                items: [1, 5, 30, 60, 1440].map((m) => ({ key: m, label: m >= 1440 ? '快进 1 天' : `快进 ${m} 分钟` })),
                 onClick: ({ key }) => fastForward(Number(key)),
               }}
             >
@@ -83,6 +88,7 @@ const CommunityShell: React.FC = () => {
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/events/:id" element={<EventDetailPage />} />
+            <Route path="/battery" element={<BatteryCarePage />} />
             <Route path="/elders" element={<EldersPage />} />
             <Route path="/profiles" element={<ProfilesPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />

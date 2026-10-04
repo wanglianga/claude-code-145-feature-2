@@ -1,20 +1,22 @@
 import React, { useState } from 'react'
 import { Alert, Button, Card, Col, Empty, Input, Layout, Row, Space, Tag, Typography, message } from 'antd'
-import { CheckCircleOutlined, HomeOutlined, LogoutOutlined, MedicineBoxOutlined, PhoneOutlined, SafetyOutlined } from '@ant-design/icons'
+import { CheckCircleOutlined, HomeOutlined, LogoutOutlined, MedicineBoxOutlined, PhoneOutlined, SafetyOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useStore } from '../store/useStore'
 import { AlertTypeTag, SeverityTag, StatusTag, fmtTime } from '../components/common'
 import ElderInfoCard from '../components/ElderInfoCard'
 import EventTimeline from '../components/EventTimeline'
+import BatteryCareCard from '../components/BatteryCareCard'
 
 const { Header, Content } = Layout
 const { Title, Text } = Typography
 
-/** 家属端门户：确认误报 / 请求电话核实 / 要求上门 / 直接联系急救 */
+/** 家属端门户：确认误报 / 请求电话核实 / 要求上门 / 直接联系急救 / 低电充电提醒与志愿者协助 */
 const FamilyPortalPage: React.FC = () => {
   const session = useStore((s) => s.session)!
   const logout = useStore((s) => s.logout)
   const elders = useStore((s) => s.elders)
   const events = useStore((s) => s.events)
+  const batteryEpisodes = useStore((s) => s.batteryEpisodes)
   const familyRespond = useStore((s) => s.familyRespond)
   const [notes, setNotes] = useState<Record<string, string>>({})
 
@@ -22,6 +24,9 @@ const FamilyPortalPage: React.FC = () => {
   const myEvents = events.filter((e) => e.elderId === session.elderId)
   const active = myEvents.filter((e) => e.status !== 'closed')
   const history = myEvents.filter((e) => e.status === 'closed')
+  const myBatteryEpisodes = batteryEpisodes.filter(
+    (ep) => ep.elderId === session.elderId && ep.status !== 'resolved' && ep.status !== 'replacement',
+  )
 
   if (!elder) return null
 
@@ -50,6 +55,24 @@ const FamilyPortalPage: React.FC = () => {
             <ElderInfoCard elder={elder} communityView={false} />
           </Col>
           <Col xs={24} lg={15}>
+            {myBatteryEpisodes.map((ep) => (
+              <Card
+                key={ep.id}
+                size="small"
+                style={{ marginBottom: 12, borderColor: '#faad14' }}
+                title={
+                  <Space wrap>
+                    <ThunderboltOutlined />
+                    <Tag color="orange">设备低电照护</Tag>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      手环连续低电未充电，请提醒老人充电；若已提醒但老人仍未充电，可请社区安排志愿者上门协助
+                    </Text>
+                  </Space>
+                }
+              >
+                <BatteryCareCard episode={ep} elder={elder} community={false} />
+              </Card>
+            ))}
             {active.length === 0 && (
               <Card size="small" style={{ marginBottom: 12 }}>
                 <Empty description="当前没有待处理的告警，老人状态平稳" />

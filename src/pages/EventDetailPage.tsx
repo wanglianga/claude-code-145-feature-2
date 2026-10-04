@@ -18,7 +18,7 @@ import {
   Typography,
   message,
 } from 'antd'
-import { ArrowLeftOutlined, PhoneOutlined, SafetyOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, PhoneOutlined, SafetyOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useStore, GRID_WORKERS, nearestWorker } from '../store/useStore'
 import { CLOSURE_LABEL, ClosureCategory, ESCALATION_LABEL } from '../types'
 import { FALSE_REASONS } from '../store/workflow'
@@ -26,6 +26,7 @@ import { AlertTypeTag, SeverityTag, StatusTag, fmtMinutes, fmtTime } from '../co
 import ElderInfoCard from '../components/ElderInfoCard'
 import PlanSteps from '../components/PlanSteps'
 import EventTimeline from '../components/EventTimeline'
+import BatteryCareCard from '../components/BatteryCareCard'
 
 const { Text, Title } = Typography
 
@@ -59,6 +60,7 @@ const EventDetailPage: React.FC = () => {
 
   const closed = ev.status === 'closed'
   const worker = nearestWorker(elder, GRID_WORKERS)
+  const batteryEpisode = ev.batteryEpisodeId ? store.batteryEpisodes.find((ep) => ep.id === ev.batteryEpisodeId) : undefined
 
   const familyAct = (response: 'false_alarm' | 'request_call' | 'request_visit' | 'called_120') => {
     store.familyRespond(ev.id, response, familyNote)
@@ -128,6 +130,20 @@ const EventDetailPage: React.FC = () => {
               {ev.family.note && <Descriptions.Item label="家属留言">{ev.family.note}</Descriptions.Item>}
             </Descriptions>
           </Card>
+          {batteryEpisode && (
+            <Card
+              size="small"
+              title={
+                <Space>
+                  <ThunderboltOutlined />
+                  关联低电照护工单 {batteryEpisode.id}
+                </Space>
+              }
+              style={{ marginBottom: 12 }}
+            >
+              <BatteryCareCard episode={batteryEpisode} elder={elder} community />
+            </Card>
+          )}
         </Col>
 
         {/* 中：处置流程 + 全程记录 */}
@@ -258,6 +274,14 @@ const EventDetailPage: React.FC = () => {
               </Row>
               <Descriptions column={1} size="small" bordered>
                 {ev.closure.falseReason && <Descriptions.Item label="误报原因">{ev.closure.falseReason}</Descriptions.Item>}
+                {ev.closure.maintenanceReview && (
+                  <Descriptions.Item label="设备维护复盘">
+                    <Tag color={ev.closure.maintenanceReview.delayed ? 'red' : 'green'}>
+                      {ev.closure.maintenanceReview.delayed ? '设备维护不及时' : '维护及时'}
+                    </Tag>
+                    {ev.closure.maintenanceReview.detail}
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="设备调整建议">{ev.closure.deviceSuggestion}</Descriptions.Item>
                 <Descriptions.Item label="复盘总结">{ev.closure.summary}</Descriptions.Item>
                 <Descriptions.Item label="结案">

@@ -2,6 +2,7 @@ import {
   AlertEvent,
   AlertType,
   ALERT_TYPE_LABEL,
+  BatteryCareEpisode,
   CareProfile,
   Closure,
   ClosureCategory,
@@ -10,6 +11,7 @@ import {
   PlanStep,
   Severity,
   StepState,
+  Volunteer,
 } from '../types'
 
 // ===================== 演示参数 =====================
@@ -19,8 +21,18 @@ export const FAMILY_TIMEOUT_MS = 3 * 60 * 1000
 export const PHONE_NO_ANSWER_LIMIT = 2
 /** 低电量阈值 */
 export const LOW_BATTERY = 20
+/** 连续低电达到该天数且未充电，提示家属/社区上门检查 */
+export const LOW_BATTERY_DAYS = 2
+/** 完成充电判定：电量回升至该值以上视为恢复 */
+export const CHARGED_BATTERY = 50
 
 export const isNightTime = (d: Date) => d.getHours() >= 22 || d.getHours() < 6
+
+/** 日期键（YYYY-MM-DD），用于低电跨天计数 */
+export const dayKey = (ts: number) => {
+  const d = new Date(ts)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 // ===================== 严重度评估 =====================
 
@@ -142,11 +154,11 @@ export function generatePlan(ctx: PlanContext): PlanStep[] {
   if (battery <= LOW_BATTERY || type === 'offline') {
     steps.push({
       key: 'device_maintain',
-      title: '设备维护',
+      title: '设备维护（低电照护）',
       desc: battery <= LOW_BATTERY
-        ? `告警时电量仅 ${battery}%，安排充电提醒或上门更换设备`
-        : '设备频繁离线，安排上门检修并核对佩戴习惯',
-      reason: battery <= LOW_BATTERY ? '低电量影响告警可靠性' : '离线告警指向设备/佩戴问题',
+        ? `告警时电量仅 ${battery}%：推送家属充电提醒；若连续两天低电未充电，提示家属/社区上门检查；家属已提醒仍未充电可安排志愿者上门协助充电，完成后记录协助人与恢复时间`
+        : '设备离线，安排上门核查人与设备状态，核对充电底座与佩戴习惯',
+      reason: battery <= LOW_BATTERY ? '低电量影响告警可靠性，连续低电构成照护风险' : '离线告警指向设备/佩戴/供电问题',
       conditional: true,
     })
   }
@@ -213,7 +225,7 @@ export interface EscalationCheck {
 }
 
 /** 返回本次检查新触发的升级情形（已存在的不重复） */
-export function checkEscalations(ev: AlertEvent, elder: Elder, now: number): EscalationCheck[] {
+export function checkEscalations(ev: AlertEvent, elder: Elder, now: number, episode?: BatteryCareEpisode): EscalationCheck[] {
   const out: EscalationCheck[] = []
   const has = (k: EscalationCheck['kind']) => ev.escalations.some((e) => e.kind === k)
   if (ev.status === 'closed') return out
@@ -226,6 +238,20 @@ export function checkEscalations(ev: AlertEvent, elder: Elder, now: number): Esc
   }
   if (!has('low_battery') && ev.batteryAtAlert <= LOW_BATTERY) {
     out.push({ kind: 'low_battery', note: `告警时设备电量仅 ${ev.batteryAtAlert}%，需同步安排设备维护` })
+  }
+  // 低电照护工单：连续两天低电未充电
+  if (episode && episode.lowDays >= LOW_BATTERY_DAYS && !has('low_battery_two_days')) {
+    out.push({
+      kind: 'low_battery_two_days',
+      note: `手环已连续 ${episode.lowDays} 天低电未充电，已提示家属/社区上门检查老人与设备`,
+    })
+  }
+  // 低电期间发生离线告警：设备维护不及时
+  if (ev.type === 'offline' && episode && episode.lowDays >= 1 && !has('maintenance_delayed')) {
+    out.push({
+      kind: 'maintenance_delayed',
+      note: `离线发生在连续 ${episode.lowDays} 天低电未充电期间，设备维护不及时，纳入本次事件复盘`,
+    })
   }
   if (!has('family_timeout') && ev.status === 'pending_family' && !ev.family.respondedAt && now - ev.family.notifiedAt > FAMILY_TIMEOUT_MS) {
     out.push({ kind: 'family_timeout', note: `家属超过 ${Math.round(FAMILY_TIMEOUT_MS / 60000)} 分钟未响应，社区接管处置` })
@@ -247,6 +273,96 @@ export function nearestWorker(elder: Elder, workers: GridWorker[]): GridWorker {
     workers.find((w) => w.buildings.includes(elder.building)) ??
     [...workers].sort((a, b) => a.distanceMin - b.distanceMin)[0]
   )
+}
+
+/** 匹配可上门协助充电的就近志愿者（优先可接单） */
+export function nearestVolunteer(elder: Elder, volunteers: Volunteer[]): Volunteer {
+  const same = volunteers.filter((v) => v.buildings.includes(elder.building))
+  const pool = same.length ? same : volunteers
+  return (
+    pool.find((v) => v.available) ??
+    [...pool].sort((a, b) => a.distanceMin - b.distanceMin)[0]
+  )
+}
+
+// ===================== 低电照护风险提示 =====================
+
+/** 依据老人佩戴习惯与历史告警，生成低电照护风险提示 */
+export function buildLowBatteryHints(elder: Elder, lowDays: number, relatedOfflineCount = 0): string[] {
+  const hints: string[] = []
+  const habit = elder.wearingHabit
+
+  if (habit.includes('夜间') || habit.includes('充电')) {
+    hints.push(`佩戴习惯为「${habit}」，通常夜间取下充电，请确认近两晚是否漏充或充电底座未接通`)
+  } else if (habit.includes('忘记佩戴') || habit.includes('未戴')) {
+    hints.push(`老人佩戴习惯为「${habit}」，低电可能伴随未佩戴，需上门确认手环是否在身上、是否接触不良`)
+  } else if (habit.includes('全天佩戴')) {
+    hints.push(`老人「${habit}」，手环不便自行取下，连续低电可能是充电底座故障或不会操作，建议上门协助`)
+  } else {
+    hints.push(`结合佩戴习惯「${habit}」，请确认充电条件与老人操作能力`)
+  }
+
+  if (elder.historyFalseAlarms > 0) {
+    hints.push(`该设备历史误报 ${elder.historyFalseAlarms} 次，低电会进一步导致数据异常/漏报，需优先恢复电量`)
+  }
+  if (relatedOfflineCount > 0) {
+    hints.push(`低电期间已发生 ${relatedOfflineCount} 次离线告警，可能因电量耗尽关机，存在照护盲区`)
+  }
+  if (lowDays >= LOW_BATTERY_DAYS) {
+    hints.push(`已连续 ${lowDays} 天低电未充电，跌倒/心率/离线等告警可能无法上报，建议家属或社区立即上门检查老人与设备`)
+  }
+  return hints
+}
+
+/** 低电工单随时间推进：跨天累加低电天数，达到阈值升级为建议上门 */
+export function advanceBatteryEpisode(ep: BatteryCareEpisode, now: number): BatteryCareEpisode {
+  if (ep.status === 'resolved' || ep.status === 'replacement') return ep
+  const today = dayKey(now)
+  let { lowDays, lastDayKey, status } = ep
+  if (today !== lastDayKey) {
+    lowDays += 1
+    lastDayKey = today
+  }
+  // 连续两天低电未充电：家属已提醒但仍未充电的，保持“家属已提醒/志愿者已安排”等更靠后的状态
+  if (lowDays >= LOW_BATTERY_DAYS && status === 'monitoring') {
+    status = 'visit_suggested'
+  }
+  if (lowDays !== ep.lowDays || lastDayKey !== ep.lastDayKey || status !== ep.status) {
+    return { ...ep, lowDays, lastDayKey, status }
+  }
+  return ep
+}
+
+/**
+ * 复盘：低电期间发生离线告警时，把设备维护不及时作为事件复盘的一部分
+ */
+export function buildMaintenanceReview(
+  ev: AlertEvent,
+  episode: BatteryCareEpisode | undefined,
+): { delayed: boolean; detail: string; episodeId?: string } | undefined {
+  if (ev.type !== 'offline' || !episode) return undefined
+  const delayed = episode.lowDays >= 1
+  if (!delayed) {
+    return {
+      delayed: false,
+      detail: `离线前设备处于正常电量观察流程（本次低电工单 ${episode.id} 已跟踪），离线与低电维护无关`,
+      episodeId: episode.id,
+    }
+  }
+  const assistText = episode.chargeAssist
+    ? `社区已安排志愿者 ${episode.chargeAssist.volunteerName} 协助`
+    : episode.familyStillNotCharging
+      ? '家属确认已提醒但老人仍未充电，志愿者尚未上门'
+      : episode.familyRemindedAt
+        ? '家属确认已提醒老人，充电情况未得到确认，社区未上门维护'
+        : '家属尚未确认提醒，社区未上门维护'
+  return {
+    delayed: true,
+    detail:
+      `设备离线发生在连续 ${episode.lowDays} 天低电未充电期间，判定为设备维护不及时：${assistText}。` +
+      `应将充电提醒/协助前置，避免电量耗尽导致离线与照护盲区。`,
+    episodeId: episode.id,
+  }
 }
 
 export const FALSE_REASONS = [
@@ -292,6 +408,14 @@ export function buildDeviceSuggestion(category: ClosureCategory, falseReason: st
   return tips.join('；') || '设备运行正常，暂无调整建议'
 }
 
+/** 复盘结论含设备维护不及时时，追加设备/底座处置建议 */
+export function maintenanceDelayedSuggestion(ev: AlertEvent): string | null {
+  if (ev.closure?.maintenanceReview?.delayed) {
+    return '低电期间发生离线，建议上门检查充电底座供电与手环电池，必要时更换充电底座或设备'
+  }
+  return null
+}
+
 /** 计算家属响应时长（分钟），未响应返回 null */
 export function familyResponseMinutes(ev: AlertEvent, closedAt: number): number | null {
   if (ev.family.respondedAt) return Math.round((ev.family.respondedAt - ev.family.notifiedAt) / 60000)
@@ -314,35 +438,59 @@ export function sedimentProfile(profile: CareProfile, ev: AlertEvent, closure: C
   if (ev.type === 'offline') p.offlineCount += 1
   // 上门结果可能被后续入户结果覆盖，以升级记录为准
   if (ev.escalations.some((e) => e.kind === 'door_no_answer') || ev.doorVisit?.result === 'no_answer') p.doorNoAnswerCount += 1
+  // 设备低电照护：低电期间离线且维护不及时（按事件复盘计数）
+  if (closure.maintenanceReview?.delayed) p.maintenanceDelayedCount += 1
 
+  return refreshProfile(p, now, ev.batteryAtAlert)
+}
+
+/** 依据画像当前计数重算风险等级、标签与照护策略建议 */
+export function refreshProfile(p: CareProfile, now: number, batteryAtAlert?: number): CareProfile {
+  const next: CareProfile = { ...p, strategy: { ...p.strategy }, riskTags: [...p.riskTags] }
   // 风险评分
   const score =
-    p.realRiskCount * 3 + p.careGapCount * 2 + p.familyTimeoutCount * 2 + p.doorNoAnswerCount * 2 + p.offlineCount + p.falseAlarmCount
-  p.riskLevel = score >= 10 ? 'high' : score >= 5 ? 'medium' : 'low'
+    next.realRiskCount * 3 +
+    next.careGapCount * 2 +
+    next.familyTimeoutCount * 2 +
+    next.doorNoAnswerCount * 2 +
+    next.maintenanceDelayedCount * 2 +
+    next.offlineCount +
+    next.lowBatteryCount +
+    next.falseAlarmCount
+  next.riskLevel = score >= 10 ? 'high' : score >= 5 ? 'medium' : 'low'
 
   // 画像标签
   const tags: string[] = []
-  if (p.familyTimeoutCount >= 2) tags.push('家属连续无人响应')
-  if (p.offlineCount >= 2) tags.push('设备频繁离线')
-  if (p.doorNoAnswerCount >= 1) tags.push('上门无人在家')
-  if (p.falseAlarmCount >= 3) tags.push('设备误报偏多')
-  if (p.realRiskCount >= 1) tags.push('发生过真实风险')
-  if (p.careGapCount >= 1) tags.push('存在照护缺口')
-  p.riskTags = tags.length ? tags : ['状态平稳']
+  if (next.familyTimeoutCount >= 2) tags.push('家属连续无人响应')
+  if (next.offlineCount >= 2) tags.push('设备频繁离线')
+  if (next.maintenanceDelayedCount >= 1) tags.push('设备维护不及时')
+  if (next.lowBatteryCount >= 2) tags.push('反复低电未充电')
+  if (next.chargeAssistCount >= 2) tags.push('需反复协助充电')
+  if (next.doorNoAnswerCount >= 1) tags.push('上门无人在家')
+  if (next.falseAlarmCount >= 3) tags.push('设备误报偏多')
+  if (next.realRiskCount >= 1) tags.push('发生过真实风险')
+  if (next.careGapCount >= 1) tags.push('存在照护缺口')
+  next.riskTags = tags.length ? tags : ['状态平稳']
 
   // 照护策略建议
-  p.strategy.visitFrequency =
-    p.riskLevel === 'high' ? '每日上门巡访 + 早晚两次电话' : p.riskLevel === 'medium' ? '隔日电话 + 每周上门一次' : '每周电话巡访一次'
-  p.strategy.deviceMaintenance =
-    p.offlineCount >= 2 || p.falseAlarmCount >= 3
-      ? '安排上门检修设备并重新标定阈值'
-      : ev.batteryAtAlert <= LOW_BATTERY
-        ? '每周提醒充电，纳入设备巡检清单'
-        : '按季度常规巡检'
-  p.strategy.familyReminder =
-    p.familyTimeoutCount >= 2 ? '升级为电话+短信+APP三通道，并约谈家属明确照护责任' : 'APP推送 + 短信提醒'
-  p.updatedAt = now
-  return p
+  next.strategy.visitFrequency =
+    next.riskLevel === 'high'
+      ? '每日上门巡访 + 早晚两次电话'
+      : next.riskLevel === 'medium'
+        ? '隔日电话 + 每周上门一次'
+        : '每周电话巡访一次'
+  next.strategy.deviceMaintenance =
+    next.maintenanceDelayedCount >= 1
+      ? '立即上门检修充电底座/设备，低电工单未闭环前每日跟踪电量'
+      : next.offlineCount >= 2 || next.falseAlarmCount >= 3
+        ? '安排上门检修设备并重新标定阈值'
+        : next.lowBatteryCount >= 1 || (batteryAtAlert !== undefined && batteryAtAlert <= LOW_BATTERY)
+          ? '每周提醒充电，纳入设备巡检清单'
+          : '按季度常规巡检'
+  next.strategy.familyReminder =
+    next.familyTimeoutCount >= 2 ? '升级为电话+短信+APP三通道，并约谈家属明确照护责任' : 'APP推送 + 短信提醒'
+  next.updatedAt = now
+  return next
 }
 
 export function emptyProfile(elderId: string, now: number): CareProfile {
@@ -354,6 +502,9 @@ export function emptyProfile(elderId: string, now: number): CareProfile {
     familyTimeoutCount: 0,
     offlineCount: 0,
     doorNoAnswerCount: 0,
+    lowBatteryCount: 0,
+    maintenanceDelayedCount: 0,
+    chargeAssistCount: 0,
     riskLevel: 'low',
     riskTags: ['状态平稳'],
     strategy: {

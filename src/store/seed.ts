@@ -1,5 +1,5 @@
-import { AlertEvent, CareProfile, DutyStaff, Elder, GridWorker } from '../types'
-import { assessSeverity, generatePlan, emptyProfile } from './workflow'
+import { AlertEvent, BatteryCareEpisode, CareProfile, DutyStaff, Elder, GridWorker, Volunteer } from '../types'
+import { assessSeverity, dayKey, generatePlan, emptyProfile } from './workflow'
 
 const MIN = 60 * 1000
 const HOUR = 60 * MIN
@@ -52,7 +52,7 @@ export function seedElders(now: number): Elder[] {
       activityRange: ['社区活动室', '北门棋牌角'],
       wearingHabit: '全天佩戴',
       deviceId: 'BR-2024-0102',
-      battery: 18,
+      battery: 15,
       thresholds: { heartRateLow: 50, heartRateHigh: 110, stillnessMinutes: 60, geofenceRadius: 600, curfewTime: '20:30' },
       accessInfo: '单元门禁对讲可远程开门',
       keyCustody: '未托管，儿媳持有备用钥匙',
@@ -162,23 +162,39 @@ export const DUTY_STAFF: DutyStaff[] = [
 
 export const dutyText = DUTY_STAFF.map((d) => `${d.role} ${d.name}`).join(' / ')
 
+/** 充电协助志愿者名单（家属已提醒仍未充电时，社区可安排上门） */
+export const VOLUNTEERS: Volunteer[] = [
+  { id: 'v1', name: '林阿姨（互助队）', phone: '18022220001', buildings: ['1栋', '2栋', '3栋'], distanceMin: 6, available: true },
+  { id: 'v2', name: '小马（社区志愿者）', phone: '18022220002', buildings: ['4栋', '5栋', '6栋'], distanceMin: 7, available: true },
+  { id: 'v3', name: '老郑（党员志愿岗）', phone: '18022220003', buildings: ['7栋', '8栋', '9栋'], distanceMin: 12, available: false },
+]
+
 // ===================== 种子事件 =====================
 
 function firstContact(e: Elder) {
   return [...e.contacts].sort((a, b) => a.priority - b.priority)[0]
 }
 
-function makeEventBase(e: Elder, type: AlertEvent['type'], location: string, occurredAt: number, now: number, forceNight = false) {
+function makeEventBase(
+  e: Elder,
+  type: AlertEvent['type'],
+  location: string,
+  occurredAt: number,
+  now: number,
+  forceNight = false,
+  batteryOverride?: number,
+) {
   const isNight =
     forceNight ||
     (() => {
       const d = new Date(occurredAt)
       return d.getHours() >= 22 || d.getHours() < 6
     })()
+  const battery = batteryOverride ?? e.battery
   const severity = assessSeverity(type, {
     isNight,
     location,
-    battery: e.battery,
+    battery,
     historyFalseAlarms: e.historyFalseAlarms,
   })
   const c = firstContact(e)
@@ -189,7 +205,7 @@ function makeEventBase(e: Elder, type: AlertEvent['type'], location: string, occ
     location,
     isNight,
     occurredAt,
-    batteryAtAlert: e.battery,
+    batteryAtAlert: battery,
     escalations: [],
     family: { contactName: c.name, contactPhone: c.phone, notifiedAt: occurredAt + 1 * MIN, timedOut: false },
     phoneAttempts: [],
@@ -198,7 +214,7 @@ function makeEventBase(e: Elder, type: AlertEvent['type'], location: string, occ
       type,
       location,
       isNight,
-      battery: e.battery,
+      battery,
       severity,
       gridWorkers: GRID_WORKERS,
       dutyText,
@@ -206,7 +222,7 @@ function makeEventBase(e: Elder, type: AlertEvent['type'], location: string, occ
   }
 }
 
-export function seedEvents(now: number): AlertEvent[] {
+export function seedEvents(now: number): { events: AlertEvent[]; batteryEpisodes: BatteryCareEpisode[] } {
   const elders = seedElders(now)
   const [e1, e2, e3, e4] = elders
 
@@ -243,7 +259,7 @@ export function seedEvents(now: number): AlertEvent[] {
   // 3) 已结案：李建国 心率异常 —— 真实风险，120就医
   const t0 = now - 3 * 24 * HOUR
   const ev3: AlertEvent = {
-    ...makeEventBase(e2, 'heart_rate', '家-客厅', t0, now),
+    ...makeEventBase(e2, 'heart_rate', '家-客厅', t0, now, false, 18),
     id: 'EV-0996',
     status: 'closed',
     doorVisit: { dispatchedAt: t0 + 8 * MIN, assignee: '赵强', arrivedAt: t0 + 16 * MIN, result: 'need_medical', note: '老人胸闷出汗，意识清楚', propertyInvolved: false, usedKeyCustody: false },
@@ -304,7 +320,110 @@ export function seedEvents(now: number): AlertEvent[] {
   ev4.family.response = 'false_alarm'
   ev4.family.note = '母亲在洗澡，手环摘了放在外面'
 
-  return [ev1, ev2, ev3, ev4]
+  // 5) 进行中：李建国 设备离线 —— 连续两天低电未充电期间发生，家属已提醒但仍未充电
+  //    低电照护工单 BC-2001 与事件联动
+  const lowStart = now - 2 * 24 * HOUR + 3 * HOUR // 前天夜间首次低电
+  const ev5Occurred = now - 35 * MIN
+  const ev5: AlertEvent = {
+    ...makeEventBase(e2, 'offline', '—（设备离线）', ev5Occurred, now, false, 6),
+    id: 'EV-1003',
+    status: 'door_visit',
+    batteryEpisodeId: 'BC-2001',
+    doorVisit: { dispatchedAt: now - 20 * MIN, assignee: '赵强', propertyInvolved: false, usedKeyCustody: false },
+    escalations: [
+      { kind: 'low_battery', at: ev5Occurred, note: '告警时设备电量仅 6%，需同步安排设备维护' },
+      { kind: 'maintenance_delayed', at: ev5Occurred + 1 * MIN, note: '离线发生在连续 2 天低电未充电期间，设备维护不及时，纳入本次事件复盘' },
+    ],
+    timeline: [
+      { at: lowStart, actor: 'device', kind: 'battery', title: '设备电量进入低电（16%）', detail: '系统已向家属推送充电提醒' },
+      { at: now - 1 * 24 * HOUR, actor: 'device', kind: 'battery', title: '次日仍低电（12%）未充电', detail: '连续低电，页面提示家属/社区上门检查' },
+      { at: ev5Occurred, actor: 'device', kind: 'alert', title: '手环离线超30分钟', detail: '最后在线位置：家中；最后电量 6%，疑因电量耗尽关机' },
+      { at: ev5Occurred + 1 * MIN, actor: 'system', kind: 'escalation', title: '升级：低电期间设备离线（维护不及时）', detail: '连续2天低电未充电，纳入事件复盘' },
+      { at: ev5Occurred + 2 * MIN, actor: 'system', kind: 'handle', title: '已通知紧急联系人', detail: '短信+APP推送：李明（儿子，外地）、刘芳（儿媳，同城）' },
+      { at: now - 25 * MIN, actor: 'family', kind: 'confirm', title: '家属要求上门查看', detail: '刘芳：昨晚电话提醒过充电，爸说等会儿充，刚刚电话没人接，请社区上门看看' },
+      { at: now - 20 * MIN, actor: 'community', kind: 'visit', title: '派单网格员上门', detail: '赵强（负责5栋，约8分钟到达）已接单；可同步安排志愿者协助充电' },
+    ],
+  }
+  ev5.family.respondedAt = now - 25 * MIN
+  ev5.family.response = 'request_visit'
+  ev5.family.note = '昨晚已电话提醒充电，不确定是否充上，请求社区上门看看'
+
+  // 低电照护工单：连续两天低电、家属已提醒仍未充电
+  const bc2001: BatteryCareEpisode = {
+    id: 'BC-2001',
+    elderId: 'e2',
+    deviceId: e2.deviceId,
+    startedAt: lowStart,
+    lowDays: 2,
+    lastDayKey: dayKey(now - 1 * MIN),
+    samples: [
+      { at: lowStart, battery: 16, source: 'device' },
+      { at: now - 1 * 24 * HOUR, battery: 12, source: 'device' },
+      { at: ev5Occurred, battery: 6, source: 'device' },
+    ],
+    reminders: [
+      { at: lowStart, by: '系统', role: 'system', kind: 'auto_notice', note: '低电自动推送家属：请提醒老人充电' },
+      { at: now - 1 * 24 * HOUR + 2 * HOUR, by: '系统', role: 'system', kind: 'auto_notice', note: '连续低电第二天，再次推送并提示可上门检查' },
+      { at: now - 25 * MIN, by: '刘芳', role: 'family', kind: 'family_reminded', note: '昨晚已电话提醒老人，老人答应稍后充电' },
+    ],
+    familyRemindedAt: now - 25 * MIN,
+    familyStillNotCharging: false,
+    offlineAlertIds: ['EV-1003'],
+    status: 'family_reminded',
+    replacement: {
+      at: lowStart,
+      decidedBy: '待决定',
+      option: 'keep',
+      reason: '该设备 10 天前曾发生连续低电（BC-1998，志愿者上门协助后恢复），本次为再次低电，待确认是否更换设备或充电底座',
+      relatedEpisodeId: 'BC-1998',
+    },
+  }
+
+  // 历史低电工单（10天前已闭环）：志愿者上门协助充电恢复 —— 用于"再次低电提示更换"
+  const pastStart = now - 11 * 24 * HOUR
+  const pastResolved = now - 10 * 24 * HOUR
+  const bc1998: BatteryCareEpisode = {
+    id: 'BC-1998',
+    elderId: 'e2',
+    deviceId: e2.deviceId,
+    startedAt: pastStart,
+    lowDays: 2,
+    lastDayKey: dayKey(pastResolved),
+    samples: [
+      { at: pastStart, battery: 14, source: 'device' },
+      { at: pastStart + 1 * 24 * HOUR, battery: 9, source: 'device' },
+      { at: pastResolved, battery: 88, source: 'manual' },
+    ],
+    reminders: [
+      { at: pastStart, by: '系统', role: 'system', kind: 'auto_notice', note: '低电自动推送家属' },
+      { at: pastResolved, by: '小马（社区志愿者）', role: 'volunteer', kind: 'volunteer_assist', note: '上门协助插上充电底座，手环恢复充电' },
+    ],
+    familyRemindedAt: pastStart + 3 * HOUR,
+    chargeAssist: {
+      volunteerName: '小马（社区志愿者）',
+      volunteerPhone: '18022220002',
+      assignedAt: pastResolved - 40 * MIN,
+      arrivedAt: pastResolved - 30 * MIN,
+      result: 'charged',
+      note: '老人不会对准充电触点，志愿者协助后正常充电',
+    },
+    offlineAlertIds: [],
+    status: 'resolved',
+    resolution: {
+      at: pastResolved,
+      helperName: '小马（社区志愿者）',
+      helperRole: 'volunteer',
+      recoveredAt: pastResolved - 30 * MIN,
+      batteryAfter: 88,
+      note: '志愿者上门协助充电，电量恢复',
+    },
+    closedAt: pastResolved,
+  }
+
+  return {
+    events: [ev1, ev5, ev2, ev3, ev4],
+    batteryEpisodes: [bc2001, bc1998],
+  }
 }
 
 // ===================== 初始照护画像 =====================
@@ -320,6 +439,8 @@ export function seedProfiles(now: number): Record<string, CareProfile> {
     }),
     e2: mk('e2', {
       realRiskCount: 1,
+      lowBatteryCount: 1,
+      chargeAssistCount: 1,
       riskLevel: 'medium',
       riskTags: ['发生过真实风险'],
       strategy: { visitFrequency: '隔日电话 + 每周上门一次', deviceMaintenance: '每周提醒充电，纳入设备巡检清单', familyReminder: 'APP推送 + 短信提醒' },
